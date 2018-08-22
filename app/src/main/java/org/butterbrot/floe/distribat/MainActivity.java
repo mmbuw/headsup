@@ -15,6 +15,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import java.util.Arrays;
 
 import uk.me.berndporr.kiss_fft.KISSFastFourierTransformer;
 import org.apache.commons.math3.complex.Complex;
@@ -31,6 +32,8 @@ public class MainActivity extends AppCompatActivity {
     RecordAudioTask ra;
     short[] rawbuffer;
     double[] input;
+    double[] prev;
+    double[] tmpb;
     boolean doRecord = false;
 
     // https://stackoverflow.com/questions/5774104/android-audio-fft-to-retrieve-specific-frequency-magnitude-using-audiorecord
@@ -71,6 +74,7 @@ public class MainActivity extends AppCompatActivity {
 
         rawbuffer = new short[fftwindowsize];
         input = new double[fftwindowsize];
+        prev = new double[fftwindowsize];
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
@@ -112,6 +116,24 @@ public class MainActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
+    int[] freq_offsets = {
+            3243, // 19 kHz
+            3584  // 21 kHz
+    };
+    double freq_threshold = 100.0;
+
+    // detect "interesting" frequencies in FFT result
+    private int detect_freq(Complex[] data) {
+        int freq_count = 0;
+        for (int f: freq_offsets) {
+            if (data[f].abs() > freq_threshold) {
+                //Log.d(TAG, " " + ComputeFrequency(f) + "detected");
+                freq_count += 1;
+            }
+        }
+        return freq_count;
+    }
+
     // https://www.androidcookbook.info/android-media/visualizing-frequencies.html
     private class RecordAudioTask extends AsyncTask<Void, double[], Void> {
 
@@ -127,6 +149,7 @@ public class MainActivity extends AppCompatActivity {
                 //Log.d(TAG, "got audio data: numsamples = " + result);
 
                 long time1 = System.currentTimeMillis();
+                tmpb = prev; prev = input; input = tmpb;
                 for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / 32768.0);
                 Complex[] output = fft.transformRealOptimisedForward(input);
                 //long time2 = System.currentTimeMillis();
@@ -141,7 +164,21 @@ public class MainActivity extends AppCompatActivity {
                         maxpos = i;
                     }
 
-                Log.d(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos);
+                Log.d(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());
+
+                // did we detect all required frequencies?
+                if (detect_freq(output) == freq_offsets.length) {
+                    int stepsize = 480; // corresponds to 10 ms at 48 kHz
+                    for (int i = fftwindowsize-stepsize; i > 0; i -= stepsize) {
+                        double[] newbuf = new double[fftwindowsize];
+                        System.arraycopy(  prev, i, newbuf, 0, fftwindowsize-i );
+                        System.arraycopy( input, 0, newbuf, fftwindowsize-i, i );
+                        output = fft.transformRealOptimisedForward(newbuf);
+                        int res = detect_freq(output);
+                        if (res == 2) Log.d(TAG,"both freqs found at offset "+i);
+                        else { Log.d(TAG,"one freq found at offset "+i); break; }
+                    }
+                }
             }
 
             audioRecord.stop();
