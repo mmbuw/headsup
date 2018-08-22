@@ -9,7 +9,6 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.design.widget.FloatingActionButton;
-import android.support.design.widget.Snackbar;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
@@ -24,11 +23,15 @@ public class MainActivity extends AppCompatActivity {
 
     public KISSFastFourierTransformer fft;
     public AudioRecord audioRecord;
+    // frequency resolution is ~ 5.86 Hz
+    // processing takes ~ 15 ms
     public static int samplerate = 48000;
     public static int fftwindowsize = 8192;
     public static String TAG = "DistriBat";
+    RecordAudioTask ra;
     short[] rawbuffer;
     double[] input;
+    boolean doRecord = false;
 
     // https://stackoverflow.com/questions/5774104/android-audio-fft-to-retrieve-specific-frequency-magnitude-using-audiorecord
     private double ComputeFrequency(int arrayIndex) {
@@ -75,27 +78,14 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View view) {
                 //Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG).setAction("Action", null).show();
 
-                if ((audioRecord != null) && (audioRecord.getState() == AudioRecord.STATE_INITIALIZED)) {
+                /*if ((audioRecord != null) && (audioRecord.getState() == AudioRecord.STATE_INITIALIZED)) {
                     // this throws an exception with some combinations of samplerate and bufferSize
                     try { audioRecord.startRecording(); }
                     catch (Exception e) { audioRecord = null; }
-                }
-                int result = audioRecord.read(rawbuffer,0, rawbuffer.length, AudioRecord.READ_BLOCKING);
-                Log.d(TAG,"got audio data: numsamples = "+result);
+                }*/
 
-                for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / 32768.0);
-
-                Complex[] output = fft.transformRealOptimisedForward(input);
-
-                double max = 0.0;
-                int maxpos = 0;
-                for (int i = 1; i < output.length; i++)
-                    if (output[i].abs() > max) {
-                        max = output[i].abs();
-                        maxpos = i;
-                    }
-
-                Log.d(TAG,"max freq = "+ComputeFrequency(maxpos));
+                if (doRecord) { doRecord = false; }
+                else ra = (RecordAudioTask) new RecordAudioTask().execute();
             }
         });
     }
@@ -123,26 +113,46 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // https://www.androidcookbook.info/android-media/visualizing-frequencies.html
-    /*private class RecordAudio extends AsyncTask<Void, double[], Void> {
+    private class RecordAudioTask extends AsyncTask<Void, double[], Void> {
 
         @Override protected Void doInBackground(Void... params) { try {
 
             audioRecord.startRecording();
+            Log.d(TAG,"start recording");
+            doRecord = true;
 
-            while (true) {
+            while (doRecord) {
 
-                int result = audioRecord.read( rawbuffer, 0, fftwindowsize, AudioRecord.READ_BLOCKING );
+                int result = audioRecord.read(rawbuffer, 0, rawbuffer.length, AudioRecord.READ_BLOCKING);
+                //Log.d(TAG, "got audio data: numsamples = " + result);
 
-            for (int i = 0; i < rawbuffer.length && i < bufferReadResult; i++) input[i] = (double) rawbuffer[i] / (double) Short.MAX_VALUE;
+                long time1 = System.currentTimeMillis();
+                for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / 32768.0);
+                Complex[] output = fft.transformRealOptimisedForward(input);
+                //long time2 = System.currentTimeMillis();
 
-                        transformer.ft(toTransform);
+                //Log.d(TAG,"timediff = ms: "+(time2-time1));
 
-                Calling publishProgress calls onProgressUpdate.
+                double max = 0.0;
+                int maxpos = 0;
+                for (int i = 1; i < output.length; i++)
+                    if (output[i].abs() > max) {
+                        max = output[i].abs();
+                        maxpos = i;
+                    }
 
-                publishProgress(toTransform);
+                Log.d(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos);
+            }
 
-                Log.e("AudioRecord", "Recording Failed");
+            audioRecord.stop();
+            Log.d(TAG,"stop recording");
 
-                return null;
-     */
+            /*Calling publishProgress calls onProgressUpdate.
+
+            publishProgress(toTransform);
+
+            Log.e("AudioRecord", "Recording Failed");*/
+
+        } catch(Exception e) { } return null; }
+    }
 }
