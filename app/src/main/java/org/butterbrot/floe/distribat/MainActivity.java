@@ -2,6 +2,10 @@ package org.butterbrot.floe.distribat;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -15,6 +19,8 @@ import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.ImageView;
+
 import java.util.Arrays;
 
 import uk.me.berndporr.kiss_fft.KISSFastFourierTransformer;
@@ -34,11 +40,31 @@ public class MainActivity extends AppCompatActivity {
     double[] input;
     double[] prev;
     double[] tmpb;
+    double[] hann;
     boolean doRecord = false;
+
+    public static int canvas_size = 512;
+    ImageView imageView;
+    Bitmap bitmap;
+    Canvas canvas;
+    Paint paint;
+
 
     // https://stackoverflow.com/questions/5774104/android-audio-fft-to-retrieve-specific-frequency-magnitude-using-audiorecord
     private double ComputeFrequency(int arrayIndex) {
         return ((1.0 * samplerate) / (1.0 * fftwindowsize)) * arrayIndex;
+    }
+
+    private double ComputeIndex(int frequency) {
+        return ((1.0 * fftwindowsize) / (1.0 * samplerate)) * frequency;
+    }
+
+    private double[] hann_window(int size) {
+        double[] hann = new double[size];
+        for (int i = 0; i < size; i++) {
+            hann[i] = 0.5 * (1.0 - Math.cos(2.0*i*Math.PI/(double)(size-1)));
+        }
+        return hann;
     }
 
     // Requesting permission to RECORD_AUDIO (from https://developer.android.com/guide/topics/media/mediarecorder#java)
@@ -70,28 +96,28 @@ public class MainActivity extends AppCompatActivity {
 
         int bufferSize = AudioRecord.getMinBufferSize( samplerate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT );
         Log.d(TAG,"minBufferSize = "+bufferSize);
-        audioRecord = new AudioRecord( MediaRecorder.AudioSource.UNPROCESSED, samplerate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize );
+        audioRecord = new AudioRecord( MediaRecorder.AudioSource.UNPROCESSED, samplerate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize*4 );
 
         rawbuffer = new short[fftwindowsize];
         input = new double[fftwindowsize];
         prev = new double[fftwindowsize];
+        hann = hann_window(fftwindowsize);
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                //Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG).setAction("Action", null).show();
-
-                /*if ((audioRecord != null) && (audioRecord.getState() == AudioRecord.STATE_INITIALIZED)) {
-                    // this throws an exception with some combinations of samplerate and bufferSize
-                    try { audioRecord.startRecording(); }
-                    catch (Exception e) { audioRecord = null; }
-                }*/
-
-                if (doRecord) { doRecord = false; }
-                else ra = (RecordAudioTask) new RecordAudioTask().execute();
+                if (doRecord) { doRecord = false; ((FloatingActionButton)view).setImageResource(android.R.drawable.ic_media_play); }
+                else { ra = (RecordAudioTask) new RecordAudioTask().execute(); ((FloatingActionButton)view).setImageResource(android.R.drawable.ic_media_pause); }
             }
         });
+
+        imageView = (ImageView) this.findViewById(R.id.imageView);
+        bitmap = Bitmap.createBitmap(canvas_size, canvas_size, Bitmap.Config.ARGB_8888);
+        canvas = new Canvas(bitmap);
+        paint = new Paint();
+        paint.setColor(Color.GREEN);
+        imageView.setImageBitmap(bitmap);
     }
 
     @Override
@@ -135,7 +161,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // https://www.androidcookbook.info/android-media/visualizing-frequencies.html
-    private class RecordAudioTask extends AsyncTask<Void, double[], Void> {
+    private class RecordAudioTask extends AsyncTask<Void, Complex[], Void> {
 
         @Override protected Void doInBackground(Void... params) { try {
 
@@ -150,7 +176,7 @@ public class MainActivity extends AppCompatActivity {
 
                 long time1 = System.currentTimeMillis();
                 tmpb = prev; prev = input; input = tmpb;
-                for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / 32768.0);
+                for (int i = 0; i < input.length; i++) input[i] = hann[i] * 100.0 * (rawbuffer[i] / 32768.0);
                 Complex[] output = fft.transformRealOptimisedForward(input);
                 //long time2 = System.currentTimeMillis();
 
@@ -164,21 +190,28 @@ public class MainActivity extends AppCompatActivity {
                         maxpos = i;
                     }
 
-                Log.d(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());
+                Log.v(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());
+                publishProgress(output);
+
+                /*double[] newbuf = new double[fftwindowsize];
 
                 // did we detect all required frequencies?
                 if (detect_freq(output) == freq_offsets.length) {
+                    Log.d(TAG,"all required frequencies detected, starting offset calculation...");
                     int stepsize = 480; // corresponds to 10 ms at 48 kHz
                     for (int i = fftwindowsize-stepsize; i > 0; i -= stepsize) {
-                        double[] newbuf = new double[fftwindowsize];
                         System.arraycopy(  prev, i, newbuf, 0, fftwindowsize-i );
                         System.arraycopy( input, 0, newbuf, fftwindowsize-i, i );
                         output = fft.transformRealOptimisedForward(newbuf);
                         int res = detect_freq(output);
-                        if (res == 2) Log.d(TAG,"both freqs found at offset "+i);
-                        else { Log.d(TAG,"one freq found at offset "+i); break; }
+                        //if (res == 2) Log.d(TAG,"both freqs found at offset "+i);
+                        if (res < 2) {
+                            int offset = fftwindowsize - i;
+                            Log.d(TAG,"frequency start offset (ms): "+((1000.0 * i) / (double)samplerate));
+                            break;
+                        }
                     }
-                }
+                }*/
             }
 
             audioRecord.stop();
@@ -191,5 +224,15 @@ public class MainActivity extends AppCompatActivity {
             Log.e("AudioRecord", "Recording Failed");*/
 
         } catch(Exception e) { } return null; }
+
+        @Override protected void onProgressUpdate(Complex[]... data) {
+            canvas.drawColor(Color.BLACK);
+            for (int x = 0; x < canvas_size; x++) {
+                int downy = (int) (canvas_size - (data[0][3200+x].abs() * 10));
+                int upy = canvas_size;
+                canvas.drawLine(x, downy, x, upy, paint);
+            }
+            imageView.invalidate();
+        }
     }
 }
