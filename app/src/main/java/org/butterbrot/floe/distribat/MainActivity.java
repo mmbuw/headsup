@@ -33,7 +33,7 @@ public class MainActivity extends AppCompatActivity {
     // frequency resolution is ~ 5.86 Hz
     // processing takes ~ 15 ms
     public static int samplerate = 48000;
-    public static int fftwindowsize = 8192;
+    public static int fftwindowsize = 1024;//8192;
     public static String TAG = "DistriBat";
     RecordAudioTask ra;
     short[] rawbuffer;
@@ -41,6 +41,7 @@ public class MainActivity extends AppCompatActivity {
     double[] prev;
     double[] tmpb;
     double[] hann;
+    double[] scratch;
     boolean doRecord = false;
 
     public static int canvas_size = 512;
@@ -55,8 +56,8 @@ public class MainActivity extends AppCompatActivity {
         return ((1.0 * samplerate) / (1.0 * fftwindowsize)) * arrayIndex;
     }
 
-    private double ComputeIndex(int frequency) {
-        return ((1.0 * fftwindowsize) / (1.0 * samplerate)) * frequency;
+    private int ComputeIndex(int frequency) {
+        return (int)((((double)fftwindowsize) / ((double)samplerate)) * (double)frequency);
     }
 
     private double[] hann_window(int size) {
@@ -65,6 +66,35 @@ public class MainActivity extends AppCompatActivity {
             hann[i] = 0.5 * (1.0 - Math.cos(2.0*i*Math.PI/(double)(size-1)));
         }
         return hann;
+    }
+
+    Complex[] fft_with_hann(double[] input) {
+        for (int i = 0; i < input.length; i++) scratch[i] = hann[i] * input[i];
+        return fft.transformRealOptimisedForward(scratch);
+    }
+
+    int[] freq_offsets = {
+            19000, //3243,
+            21000, //3584
+    };
+    double freq_threshold = 20.0;
+
+    // detect "interesting" frequencies in FFT result
+    private int detect_freq(Complex[] data) {
+        // first run -> convert frequencies to FFT bins
+        if (freq_offsets[0] > 10000)
+            for (int i = 0; i < freq_offsets.length; i++) {
+            freq_offsets[i] = ComputeIndex(freq_offsets[i]);
+            Log.d(TAG,"mapping index "+freq_offsets[i]);
+        }
+        int freq_count = 0;
+        for (int f: freq_offsets) {
+            if (data[f].abs() > freq_threshold) {
+                //Log.d(TAG, " " + ComputeFrequency(f) + "detected");
+                freq_count += 1;
+            }
+        }
+        return freq_count;
     }
 
     // Requesting permission to RECORD_AUDIO (from https://developer.android.com/guide/topics/media/mediarecorder#java)
@@ -102,6 +132,7 @@ public class MainActivity extends AppCompatActivity {
         input = new double[fftwindowsize];
         prev = new double[fftwindowsize];
         hann = hann_window(fftwindowsize);
+        scratch = new double[fftwindowsize];
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
@@ -142,24 +173,6 @@ public class MainActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
-    int[] freq_offsets = {
-            3243, // 19 kHz
-            3584  // 21 kHz
-    };
-    double freq_threshold = 100.0;
-
-    // detect "interesting" frequencies in FFT result
-    private int detect_freq(Complex[] data) {
-        int freq_count = 0;
-        for (int f: freq_offsets) {
-            if (data[f].abs() > freq_threshold) {
-                //Log.d(TAG, " " + ComputeFrequency(f) + "detected");
-                freq_count += 1;
-            }
-        }
-        return freq_count;
-    }
-
     // https://www.androidcookbook.info/android-media/visualizing-frequencies.html
     private class RecordAudioTask extends AsyncTask<Void, Complex[], Void> {
 
@@ -176,8 +189,9 @@ public class MainActivity extends AppCompatActivity {
 
                 long time1 = System.currentTimeMillis();
                 tmpb = prev; prev = input; input = tmpb;
-                for (int i = 0; i < input.length; i++) input[i] = hann[i] * 100.0 * (rawbuffer[i] / 32768.0);
-                Complex[] output = fft.transformRealOptimisedForward(input);
+                // TODO: magic scale factor 100.0
+                for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / (double)Short.MAX_VALUE);
+                Complex[] output = fft_with_hann(input);
                 //long time2 = System.currentTimeMillis();
 
                 //Log.d(TAG,"timediff = ms: "+(time2-time1));
@@ -193,44 +207,42 @@ public class MainActivity extends AppCompatActivity {
                 Log.v(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());
                 publishProgress(output);
 
-                /*double[] newbuf = new double[fftwindowsize];
+                double[] newbuf = new double[fftwindowsize];
+                int prev_offset = fftwindowsize;
 
                 // did we detect all required frequencies?
                 if (detect_freq(output) == freq_offsets.length) {
                     Log.d(TAG,"all required frequencies detected, starting offset calculation...");
-                    int stepsize = 480; // corresponds to 10 ms at 48 kHz
+                    int stepsize = 48; // corresponds to 1 ms at 48 kHz
                     for (int i = fftwindowsize-stepsize; i > 0; i -= stepsize) {
                         System.arraycopy(  prev, i, newbuf, 0, fftwindowsize-i );
                         System.arraycopy( input, 0, newbuf, fftwindowsize-i, i );
-                        output = fft.transformRealOptimisedForward(newbuf);
+                        output = fft_with_hann(newbuf);
                         int res = detect_freq(output);
-                        //if (res == 2) Log.d(TAG,"both freqs found at offset "+i);
-                        if (res < 2) {
-                            int offset = fftwindowsize - i;
-                            Log.d(TAG,"frequency start offset (ms): "+((1000.0 * i) / (double)samplerate));
+                        if (res == 2) prev_offset = i;
+                        if (res == 0) {
+                            int offset = prev_offset - i;
+                            Log.d(TAG,"frequency start offset (ms): "+((1000.0 * offset) / (double)samplerate));
                             break;
                         }
                     }
-                }*/
+                }
             }
 
             audioRecord.stop();
             Log.d(TAG,"stop recording");
 
-            /*Calling publishProgress calls onProgressUpdate.
-
-            publishProgress(toTransform);
-
-            Log.e("AudioRecord", "Recording Failed");*/
-
         } catch(Exception e) { } return null; }
 
+        // https://stackoverflow.com/questions/5511250/capturing-sound-for-analysis-and-visualizing-frequencies-in-android
         @Override protected void onProgressUpdate(Complex[]... data) {
             canvas.drawColor(Color.BLACK);
             for (int x = 0; x < canvas_size; x++) {
-                int downy = (int) (canvas_size - (data[0][3200+x].abs() * 10));
-                int upy = canvas_size;
-                canvas.drawLine(x, downy, x, upy, paint);
+                // visualize only the uppermost part of the spectrum
+                int startbin = data[0].length - canvas_size; //(freq_offsets[0]+freq_offsets[1] - canvas_size)/2;
+                int y1 = (int) (canvas_size - (data[0][startbin+x].abs() * 10));
+                int y2 = canvas_size;
+                canvas.drawLine(x, y1, x, y2, paint);
             }
             imageView.invalidate();
         }
