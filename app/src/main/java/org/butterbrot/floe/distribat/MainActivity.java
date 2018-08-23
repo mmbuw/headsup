@@ -28,22 +28,28 @@ import org.apache.commons.math3.complex.Complex;
 
 public class MainActivity extends AppCompatActivity {
 
-    public KISSFastFourierTransformer fft;
-    public AudioRecord audioRecord;
-    // frequency resolution is ~ 5.86 Hz
+    public static String TAG = "DistriBat";
+
+    // frequency resolution is ~  5.86 Hz with 8192
+    // frequency resolution is ~ 46.87 Hz with 1024
     // processing takes ~ 15 ms
     public static int samplerate = 48000;
-    public static int fftwindowsize = 1024;//8192;
-    public static String TAG = "DistriBat";
-    RecordAudioTask ra;
+    public static int fftwindowsize = 1024; //8192
+
+    public RecordAudioTask ra;
+    public KISSFastFourierTransformer fft;
+    public AudioRecord audioRecord;
+
     short[] rawbuffer;
     double[] input;
     double[] prev;
-    double[] tmpb;
     double[] hann;
     double[] scratch;
+    double[] masterbuf;
     boolean doRecord = false;
+    int master_offset = 0;
 
+    // visualization stuff
     public static int canvas_size = 512;
     ImageView imageView;
     Bitmap bitmap;
@@ -68,8 +74,8 @@ public class MainActivity extends AppCompatActivity {
         return hann;
     }
 
-    Complex[] fft_with_hann(double[] input) {
-        for (int i = 0; i < input.length; i++) scratch[i] = hann[i] * input[i];
+    Complex[] fft_with_hann(double[] input, int offset) {
+        for (int i = 0; i < scratch.length; i++) scratch[i] = hann[i] * input[i+offset];
         return fft.transformRealOptimisedForward(scratch);
     }
 
@@ -133,6 +139,7 @@ public class MainActivity extends AppCompatActivity {
         prev = new double[fftwindowsize];
         hann = hann_window(fftwindowsize);
         scratch = new double[fftwindowsize];
+        masterbuf = new double[samplerate]; // one second of data
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
@@ -188,44 +195,67 @@ public class MainActivity extends AppCompatActivity {
                 //Log.d(TAG, "got audio data: numsamples = " + result);
 
                 long time1 = System.currentTimeMillis();
-                tmpb = prev; prev = input; input = tmpb;
-                // TODO: magic scale factor 100.0
+                double[] tmpb = prev; prev = input; input = tmpb;
+                // FIXME: magic scale factor 100.0
                 for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / (double)Short.MAX_VALUE);
-                Complex[] output = fft_with_hann(input);
+                Complex[] output = fft_with_hann(input,0);
                 //long time2 = System.currentTimeMillis();
 
                 //Log.d(TAG,"timediff = ms: "+(time2-time1));
 
-                double max = 0.0;
+                /*double max = 0.0;
                 int maxpos = 0;
                 for (int i = 1; i < output.length; i++)
                     if (output[i].abs() > max) {
                         max = output[i].abs();
                         maxpos = i;
                     }
+                Log.v(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());*/
 
-                Log.v(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());
                 publishProgress(output);
 
-                double[] newbuf = new double[fftwindowsize];
-                int prev_offset = fftwindowsize;
+                int freq_count = detect_freq(output);
+                if (freq_count == 0) { master_offset = 0; continue; }
 
-                // did we detect all required frequencies?
-                if (detect_freq(output) == freq_offsets.length) {
-                    Log.d(TAG,"all required frequencies detected, starting offset calculation...");
+                // we found at least one, but not yet all required frequencies,
+                // so we now need to start filling the master buffer
+                if (freq_count < freq_offsets.length) {
+
+                    if (master_offset == 0) {
+                        Log.v(TAG,"initial frequency detected, filling master buffer");
+                        System.arraycopy( prev, 0, masterbuf, 0, prev.length );
+                        master_offset += prev.length;
+                    }
+
+                    Log.v(TAG,"appending data to master buffer");
+                    System.arraycopy( input, 0, masterbuf, master_offset, input.length );
+                    master_offset += input.length;
+
+                    // sanity check
+                    if (master_offset >= masterbuf.length) {
+                        Log.d(TAG,"master buffer overrun, resetting");
+                        master_offset = 0;
+                        continue;
+                    }
+
+                } else {
+
+                    if (master_offset == 0) continue;
+                    Log.d(TAG,"all required frequencies detected, starting offset calculation on master buffer bytes: "+master_offset);
                     int stepsize = 48; // corresponds to 1 ms at 48 kHz
-                    for (int i = fftwindowsize-stepsize; i > 0; i -= stepsize) {
-                        System.arraycopy(  prev, i, newbuf, 0, fftwindowsize-i );
-                        System.arraycopy( input, 0, newbuf, fftwindowsize-i, i );
-                        output = fft_with_hann(newbuf);
+                    int prev_offset = master_offset-fftwindowsize-stepsize;
+                    for (int i = prev_offset; i > 0; i -= stepsize) {
+                        output = fft_with_hann(masterbuf,i);
                         int res = detect_freq(output);
                         if (res == 2) prev_offset = i;
                         if (res == 0) {
-                            int offset = prev_offset - i;
-                            Log.d(TAG,"frequency start offset (ms): "+((1000.0 * offset) / (double)samplerate));
+                            int diff = prev_offset - i;
+                            Log.d(TAG,"frequency start offset (ms): "+((1000.0 * diff) / (double)samplerate));
                             break;
                         }
                     }
+                    // reset
+                    master_offset = 0;
                 }
             }
 
