@@ -66,6 +66,8 @@ public class MainActivity extends AppCompatActivity {
         return (int)((((double)fftwindowsize) / ((double)samplerate)) * (double)frequency);
     }
 
+    // Hann window is generally considered the best all-purpose window function, see also ...
+    // https://dsp.stackexchange.com/questions/22175/how-should-i-select-window-size-and-overlap
     private double[] hann_window(int size) {
         double[] hann = new double[size];
         for (int i = 0; i < size; i++) {
@@ -74,19 +76,23 @@ public class MainActivity extends AppCompatActivity {
         return hann;
     }
 
-    Complex[] fft_with_hann(double[] input, int offset) {
+    double[] fft_with_hann(double[] input, int offset) {
         for (int i = 0; i < scratch.length; i++) scratch[i] = hann[i] * input[i+offset];
-        return fft.transformRealOptimisedForward(scratch);
+        Complex[] tmp = fft.transformRealOptimisedForward(scratch);
+        for (int i = 0; i < tmp.length; i++) scratch[i] = tmp[i].abs();
+        return scratch;
     }
 
     int[] freq_offsets = {
             19000, //3243,
             21000, //3584
     };
+
+    // FIXME: needs to be dynamic for each frequency
     double freq_threshold = 20.0;
 
     // detect "interesting" frequencies in FFT result
-    private int detect_freq(Complex[] data) {
+    private int detect_freq(double[] data) {
         // first run -> convert frequencies to FFT bins
         if (freq_offsets[0] > 10000)
             for (int i = 0; i < freq_offsets.length; i++) {
@@ -95,7 +101,7 @@ public class MainActivity extends AppCompatActivity {
         }
         int freq_count = 0;
         for (int f: freq_offsets) {
-            if (data[f].abs() > freq_threshold) {
+            if (data[f] > freq_threshold) {
                 //Log.d(TAG, " " + ComputeFrequency(f) + "detected");
                 freq_count += 1;
             }
@@ -105,7 +111,7 @@ public class MainActivity extends AppCompatActivity {
 
     // Requesting permission to RECORD_AUDIO (from https://developer.android.com/guide/topics/media/mediarecorder#java)
     private boolean permissionToRecordAccepted = false;
-    private String [] permissions = {Manifest.permission.RECORD_AUDIO};
+    private String[] permissions = {Manifest.permission.RECORD_AUDIO};
     private static final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
 
     @Override
@@ -113,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         switch (requestCode){
             case REQUEST_RECORD_AUDIO_PERMISSION:
-                permissionToRecordAccepted  = grantResults[0] == PackageManager.PERMISSION_GRANTED;
+                permissionToRecordAccepted = (grantResults[0] == PackageManager.PERMISSION_GRANTED);
                 break;
         }
         if (!permissionToRecordAccepted ) finish();
@@ -139,7 +145,8 @@ public class MainActivity extends AppCompatActivity {
         prev = new double[fftwindowsize];
         hann = hann_window(fftwindowsize);
         scratch = new double[fftwindowsize];
-        masterbuf = new double[samplerate]; // one second of data
+
+        masterbuf = new double[samplerate]; // room for one second of data
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
@@ -181,7 +188,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // https://www.androidcookbook.info/android-media/visualizing-frequencies.html
-    private class RecordAudioTask extends AsyncTask<Void, Complex[], Void> {
+    private class RecordAudioTask extends AsyncTask<Void, double[], Void> {
 
         @Override protected Void doInBackground(Void... params) { try {
 
@@ -198,7 +205,7 @@ public class MainActivity extends AppCompatActivity {
                 double[] tmpb = prev; prev = input; input = tmpb;
                 // FIXME: magic scale factor 100.0
                 for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / (double)Short.MAX_VALUE);
-                Complex[] output = fft_with_hann(input,0);
+                double[] output = fft_with_hann(input,0);
                 //long time2 = System.currentTimeMillis();
 
                 //Log.d(TAG,"timediff = ms: "+(time2-time1));
@@ -241,13 +248,13 @@ public class MainActivity extends AppCompatActivity {
                 } else {
 
                     if (master_offset == 0) continue;
-                    Log.d(TAG,"all required frequencies detected, starting offset calculation on master buffer bytes: "+master_offset);
+                    Log.v(TAG,"all required frequencies detected, starting offset calculation on master buffer bytes: "+master_offset);
                     int stepsize = 48; // corresponds to 1 ms at 48 kHz
                     int prev_offset = master_offset-fftwindowsize-stepsize;
                     for (int i = prev_offset; i > 0; i -= stepsize) {
                         output = fft_with_hann(masterbuf,i);
                         int res = detect_freq(output);
-                        if (res == 2) prev_offset = i;
+                        if (res == 2) prev_offset = i; // freq_offsets.length
                         if (res == 0) {
                             int diff = prev_offset - i;
                             Log.d(TAG,"frequency start offset (ms): "+((1000.0 * diff) / (double)samplerate));
@@ -265,12 +272,12 @@ public class MainActivity extends AppCompatActivity {
         } catch(Exception e) { } return null; }
 
         // https://stackoverflow.com/questions/5511250/capturing-sound-for-analysis-and-visualizing-frequencies-in-android
-        @Override protected void onProgressUpdate(Complex[]... data) {
+        @Override protected void onProgressUpdate(double[]... data) {
             canvas.drawColor(Color.BLACK);
             for (int x = 0; x < canvas_size; x++) {
                 // visualize only the uppermost part of the spectrum
-                int startbin = data[0].length - canvas_size; //(freq_offsets[0]+freq_offsets[1] - canvas_size)/2;
-                int y1 = (int) (canvas_size - (data[0][startbin+x].abs() * 10));
+                int startbin = (data[0].length/2) - canvas_size;
+                int y1 = (int) (canvas_size - (data[0][startbin+x] * 10));
                 int y2 = canvas_size;
                 canvas.drawLine(x, y1, x, y2, paint);
             }
