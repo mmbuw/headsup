@@ -256,7 +256,7 @@ public class MainActivity extends AppCompatActivity {
                         int res = detect_freq(output);
                         if (res == 2) prev_offset = i; // freq_offsets.length
                         if (res == 0) {
-                            int diff = prev_offset - i;
+                            int diff = prev_offset - i; // - stepsize ?
                             Log.d(TAG,"frequency start offset (ms): "+((1000.0 * diff) / (double)samplerate));
                             break;
                         }
