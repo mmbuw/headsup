@@ -9,6 +9,7 @@ import android.graphics.Paint;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.media.SoundPool;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
@@ -39,6 +40,10 @@ public class MainActivity extends AppCompatActivity {
     public RecordAudioTask ra;
     public KISSFastFourierTransformer fft;
     public AudioRecord audioRecord;
+
+    SoundPool soundPool;
+    int[] pings;
+    public int count = 0;
 
     short[] rawbuffer;
     double[] input;
@@ -134,6 +139,22 @@ public class MainActivity extends AppCompatActivity {
 
         requestPermissions(permissions, REQUEST_RECORD_AUDIO_PERMISSION);
 
+        // TODO: setAudioAttributes()?
+        soundPool = new SoundPool.Builder().build();
+        pings = new int[6];
+        pings[0] = soundPool.load(this,R.raw.sine19500,0);
+        pings[1] = soundPool.load(this,R.raw.sine19700,0);
+        pings[2] = soundPool.load(this,R.raw.sine19900,0);
+        pings[3] = soundPool.load(this,R.raw.sine20100,0);
+        pings[4] = soundPool.load(this,R.raw.sine20300,0);
+        pings[5] = soundPool.load(this,R.raw.sine20500,0);
+
+        //pings[1] = soundPool.load(this,R.raw.sine19600,0);
+        //pings[3] = soundPool.load(this,R.raw.sine19800,0);
+        //pings[5] = soundPool.load(this,R.raw.sine20000,0);
+        //pings[7] = soundPool.load(this,R.raw.sine20200,0);
+        //pings[9] = soundPool.load(this,R.raw.sine20400,0);
+
         fft = new KISSFastFourierTransformer();
 
         int bufferSize = AudioRecord.getMinBufferSize( samplerate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT );
@@ -197,6 +218,9 @@ public class MainActivity extends AppCompatActivity {
             doRecord = true;
 
             while (doRecord) {
+
+                // FIXME: ugly hack, when exactly should playback happen?
+                if (count++ % 20 == 0) soundPool.play(pings[(int)(Math.random()*pings.length)],1.0f,1.0f,0,0,1.0f );
 
                 int result = audioRecord.read(rawbuffer, 0, rawbuffer.length, AudioRecord.READ_BLOCKING);
                 //Log.d(TAG, "got audio data: numsamples = " + result);
