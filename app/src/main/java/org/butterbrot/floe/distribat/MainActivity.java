@@ -22,8 +22,6 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.ImageView;
 
-import java.util.Arrays;
-
 import uk.me.berndporr.kiss_fft.KISSFastFourierTransformer;
 import org.apache.commons.math3.complex.Complex;
 
@@ -32,10 +30,12 @@ public class MainActivity extends AppCompatActivity {
     public static String TAG = "DistriBat";
 
     // frequency resolution is ~  5.86 Hz with 8192
+    // frequency resolution is ~ 11.71 Hz with 4096
     // frequency resolution is ~ 46.87 Hz with 1024
     // processing takes ~ 15 ms
     public static int samplerate = 48000;
-    public static int fftwindowsize = 1024; //8192
+    public static int fftwindowsize = 4096;
+    public static int searchwindow = 25;
 
     public RecordAudioTask ra;
     public KISSFastFourierTransformer fft;
@@ -44,6 +44,8 @@ public class MainActivity extends AppCompatActivity {
     SoundPool soundPool;
     int[] pings;
     public int count = 0;
+    public int nextfreq = 0;
+    public int eventcount = 0;
 
     short[] rawbuffer;
     double[] input;
@@ -51,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
     double[] hann;
     double[] scratch;
     double[] masterbuf;
+    double[] noisefloor;
     boolean doRecord = false;
     int master_offset = 0;
 
@@ -60,6 +63,7 @@ public class MainActivity extends AppCompatActivity {
     Bitmap bitmap;
     Canvas canvas;
     Paint paint;
+    int clearColor = Color.BLACK;
 
 
     // https://stackoverflow.com/questions/5774104/android-audio-fft-to-retrieve-specific-frequency-magnitude-using-audiorecord
@@ -89,12 +93,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     int[] freq_offsets = {
-            19000, //3243,
-            21000, //3584
+            19500,
+            19700,
+            19900,
+            20100,
+            20300,
+            20500
     };
 
+    double[] template = new double[2*searchwindow + 1];
+
     // FIXME: needs to be dynamic for each frequency
-    double freq_threshold = 20.0;
+    double freq_threshold = 100.0;
+    double[] wma = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    double[] wmv = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 
     // detect "interesting" frequencies in FFT result
     private int detect_freq(double[] data) {
@@ -104,14 +116,43 @@ public class MainActivity extends AppCompatActivity {
             freq_offsets[i] = ComputeIndex(freq_offsets[i]);
             Log.d(TAG,"mapping index "+freq_offsets[i]);
         }
-        int freq_count = 0;
-        for (int f: freq_offsets) {
-            if (data[f] > freq_threshold) {
-                //Log.d(TAG, " " + ComputeFrequency(f) + "detected");
-                freq_count += 1;
+
+        // find local maximum around expected base frequency
+        //int basefreq = freq_offsets[nextfreq];
+        double maxval = 0.0;
+        int basefreq = 0;
+        for (int i = 0; i < freq_offsets.length; i++) { // = basefreq-searchwindow; i < basefreq+searchwindow; i++) {
+            int index = freq_offsets[i];
+            if (data[index] > maxval) {
+                maxval = data[index];
+                basefreq = index;
+                nextfreq = i;
             }
         }
-        return freq_count;
+        //basefreq = maxfreq;
+
+        //double maxval = data[basefreq];
+        if (maxval < freq_threshold) return 0;
+
+        String msg = "values: ";
+
+        for (int i = 0; i <= 2*searchwindow; i++) {
+            template[i] = 0.9 * template[i] + 0.1 * (data[basefreq-searchwindow+i] / maxval);
+            msg += (int)(100*data[basefreq-searchwindow+i]/maxval)+",";
+            data[basefreq-searchwindow+i] -= maxval * template[i];
+        }
+        Log.d(TAG,msg);
+        msg = "template: ";
+        for (double t: template) msg+=(int)(t*100)+",";
+        Log.d(TAG,msg);
+
+        // find weight distribution of peak
+        double balance = 0.0;
+        for (int i = 5; i <= searchwindow; i++)
+            balance += (data[basefreq+i] - data[basefreq-i]);
+
+        Log.v(TAG,"basefreq = "+basefreq+" balance = "+balance);
+        return (int)Math.round(balance);
     }
 
     // Requesting permission to RECORD_AUDIO (from https://developer.android.com/guide/topics/media/mediarecorder#java)
@@ -149,6 +190,7 @@ public class MainActivity extends AppCompatActivity {
         pings[4] = soundPool.load(this,R.raw.sine20300,0);
         pings[5] = soundPool.load(this,R.raw.sine20500,0);
 
+        // TODO these sounds don't have ramp-up/ramp-down yet
         //pings[1] = soundPool.load(this,R.raw.sine19600,0);
         //pings[3] = soundPool.load(this,R.raw.sine19800,0);
         //pings[5] = soundPool.load(this,R.raw.sine20000,0);
@@ -220,7 +262,10 @@ public class MainActivity extends AppCompatActivity {
             while (doRecord) {
 
                 // FIXME: ugly hack, when exactly should playback happen?
-                if (count++ % 20 == 0) soundPool.play(pings[(int)(Math.random()*pings.length)],1.0f,1.0f,0,0,1.0f );
+                if (count++ % 3 == 0) {
+                    nextfreq = (int)(Math.random()*pings.length);
+                    soundPool.play(pings[nextfreq],1.0f,1.0f,0,0,1.0f );
+                }
 
                 int result = audioRecord.read(rawbuffer, 0, rawbuffer.length, AudioRecord.READ_BLOCKING);
                 //Log.d(TAG, "got audio data: numsamples = " + result);
@@ -230,9 +275,9 @@ public class MainActivity extends AppCompatActivity {
                 // FIXME: magic scale factor 100.0
                 for (int i = 0; i < input.length; i++) input[i] = 100.0 * (rawbuffer[i] / (double)Short.MAX_VALUE);
                 double[] output = fft_with_hann(input,0);
-                //long time2 = System.currentTimeMillis();
+                long time2 = System.currentTimeMillis();
 
-                //Log.d(TAG,"timediff = ms: "+(time2-time1));
+                Log.v(TAG,"timediff = ms: "+(time2-time1));
 
                 /*double max = 0.0;
                 int maxpos = 0;
@@ -243,14 +288,36 @@ public class MainActivity extends AppCompatActivity {
                     }
                 Log.v(TAG,"max freq = "+ComputeFrequency(maxpos)+" index "+maxpos+" value "+output[maxpos].abs());*/
 
+                int balance = detect_freq(output);
+                if (balance == 0) continue;
+
                 publishProgress(output);
 
-                int freq_count = detect_freq(output);
-                if (freq_count == 0) { master_offset = 0; continue; }
+                double delta = balance - wma[nextfreq];
+                double alpha = 0.1;
+                wma[nextfreq] = wma[nextfreq] + alpha * delta;
+                wmv[nextfreq] = (1.0-alpha) * (wmv[nextfreq] + alpha*delta*delta);
+
+                String msg = "balance moving average: ";
+                for (double w: wma) msg+=(int)w+" ";
+                Log.d(TAG,msg);
+
+                msg = "balance moving stddev: ";
+                for (double v: wmv) msg+=(int)Math.sqrt(v)+" ";
+                Log.d(TAG,msg);
+
+                if (delta > 1.5*Math.sqrt(wmv[nextfreq])) {
+                    eventcount += 1;
+                } else eventcount = 0;
+
+                if (eventcount >= 2) {
+                    Log.d(TAG, "incoming!");
+                    clearColor = Color.RED;
+                }
 
                 // we found at least one, but not yet all required frequencies,
                 // so we now need to start filling the master buffer
-                if (freq_count < freq_offsets.length) {
+                /*if (freq_count < freq_offsets.length) {
 
                     if (master_offset == 0) {
                         Log.v(TAG,"initial frequency detected, filling master buffer");
@@ -287,7 +354,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                     // reset
                     master_offset = 0;
-                }
+                }*/
             }
 
             audioRecord.stop();
@@ -297,7 +364,8 @@ public class MainActivity extends AppCompatActivity {
 
         // https://stackoverflow.com/questions/5511250/capturing-sound-for-analysis-and-visualizing-frequencies-in-android
         @Override protected void onProgressUpdate(double[]... data) {
-            canvas.drawColor(Color.BLACK);
+            canvas.drawColor(clearColor);
+            clearColor = Color.BLACK;
             for (int x = 0; x < canvas_size; x++) {
                 // visualize only the uppermost part of the spectrum
                 int startbin = (data[0].length/2) - canvas_size;
