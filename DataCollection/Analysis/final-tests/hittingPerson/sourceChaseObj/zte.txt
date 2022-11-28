@@ -1,0 +1,6 @@
+the initial distance of source and object is 3.6 meters
+they start walking and the source hits the object at some point with following parameters :
+
+t = 6.58 s		time from staring point till hitting 
+Distance(source) = 14 m
+Distance(obj) = 10.4 m

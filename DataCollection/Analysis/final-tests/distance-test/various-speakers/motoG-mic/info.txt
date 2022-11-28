@@ -1,0 +1,6 @@
+speaker zte
+mic: moto G
+
+
+the mic is so weak, bcs the speaker of zte is very strong
+so the project does not make sense for moto, cause the echoed signal should be received by the moto mic but it does not take it even from one meter

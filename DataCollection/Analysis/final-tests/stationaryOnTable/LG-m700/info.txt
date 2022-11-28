@@ -1,0 +1,3 @@
+max threshold = 0.34161
+min threshold = 0.33990
+avg = 0.34092

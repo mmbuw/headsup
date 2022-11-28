@@ -1,0 +1,5 @@
+sample rate 44100
+stationary and walking in MMLab
+
+binNo showing 20kHz is 1857
+Nexus 5X

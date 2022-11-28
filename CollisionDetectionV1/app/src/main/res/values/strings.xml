@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Collision Detection</string>
+    <string name="please_walk">Please walk around in an area where no object is closer than 3 meters to you. Meanwhile, you can play by hitting the red circle.  </string>
+</resources>

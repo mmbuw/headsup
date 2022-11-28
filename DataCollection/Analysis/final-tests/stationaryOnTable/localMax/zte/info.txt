@@ -1,0 +1,1 @@
+max of localmaxratio (omit the last 8) = 0.009797888206

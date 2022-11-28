@@ -1,0 +1,17 @@
+sample rate = 48000
+binNo showing 20kHz is 1706
+binNo showing 19kHz is 1620
+binNo showing 21kHz is 1792
+
+
+1.
+Take a notebook towards the phone from 50 cm above it.
+Nexus 5 X
+Phone is on table at MMLab.
+It is quiet while testing.
+
+2.
+Stationary
+Nexus 5 X
+Phone is on table at MMLab.
+It is quiet while testing.

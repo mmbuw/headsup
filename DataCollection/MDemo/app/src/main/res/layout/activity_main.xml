@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:id="@+id/pager"
+    tools:context="com.example.neginsharif.mdemo.MainActivity"
+    android:orientation="vertical">
+
+    <Button
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="save"
+        android:layout_marginTop="12dp"
+        android:id="@+id/save"
+        />
+
+
+    <LinearLayout
+        android:layout_marginTop="12dp"
+        android:layout_width="wrap_content"
+        android:layout_height="400dp"
+        android:orientation="vertical"
+        android:id="@+id/chart"
+        />
+
+</LinearLayout>

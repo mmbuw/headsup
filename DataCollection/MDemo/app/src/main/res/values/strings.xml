@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">DataCollection</string>
+
+    <string name="hello_world">Hello world!</string>
+    <string name="action_settings">Settings</string>
+    <string name="title_activity_test_">Test_Activity</string>
+    <string name="title_activity_play_sound">PlaySound</string>
+
+    <color name="red">#F52A2A</color>
+
+
+
+</resources>
